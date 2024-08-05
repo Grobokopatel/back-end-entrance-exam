@@ -4,7 +4,7 @@ const swaggerUi = require('swagger-ui-express');
 const swaggerJsdoc = require('swagger-jsdoc');
 const app = express();
 const PORT = process.env.PORT || 3000;
-const proxied_host = 'https://http.cat';
+const proxied_host = 'https://http.cat/';
 
 const options = {
     definition: {
@@ -12,7 +12,7 @@ const options = {
         info: {
             title: 'Кэш сервер',
             version: '1.0.0',
-            description: 'Кэш сервер для сайта https://http.cat',
+            description: 'Кэш сервер для сайта https://http.cat/',
         },
         servers: [
             {
@@ -90,10 +90,10 @@ async function fetch_data_and_transform_to_buffer(status_code) {
  *         schema:
  *           type: integer
  *       - name: dont_use_cache
- *         description: при любом значении этого параметра НЕ будет брать картинку из кэша, если она там есть
+ *         description: при использовании этого параметра, при любом его значении НЕ будет брать картинку из кэша, если она там есть
  *         in: query
  *         required: false
- *         allowEmptyValue: true  
+ *         allowEmptyValue: true
  *     responses:
  *       200:
  *         description: Картинка кота, взятая с https://http.cat/
@@ -108,8 +108,8 @@ async function fetch_data_and_transform_to_buffer(status_code) {
  *       404:
  *         description: Запрашиваемого кода состояния не существует
  *         content:
- *           application/txt:
- *             schema:             
+ *           text/plain:
+ *             schema:
  */
 app.get('/:status_code', async (req, res) => {
     let status_code = req.params.status_code;
@@ -129,7 +129,7 @@ app.get('/:status_code', async (req, res) => {
             return;
         }
         // иначе обновляю кэш
-        cache.update(status_code, buffer);
+        cache.add_or_update(status_code, buffer);
         // и возвращаю картинку с кодом 200
         res.type('image/jpg')
             .send(buffer);
@@ -139,8 +139,8 @@ app.get('/:status_code', async (req, res) => {
 /**
  * @swagger
  *
- * /update_cache:
- *   patch:
+ * /cache/update:
+ *   put:
  *     summary: Обновить все картинки из кэша
  *     tags:
  *       - Cache server
@@ -148,7 +148,7 @@ app.get('/:status_code', async (req, res) => {
  *       200:
  *         description: Кэш успешно обновлён
  */
-app.patch('/update_cache', async (req, res) => {
+app.put('/cache/update', async (req, res) => {
     let status_codes = cache.get_keys();
     for (let status_code of status_codes) {
         let {response, buffer} = await fetch_data_and_transform_to_buffer(status_code);
@@ -156,7 +156,7 @@ app.patch('/update_cache', async (req, res) => {
         if (!response.ok) {
 
         } else {
-            cache.update(status_code, buffer);
+            cache.add_or_update(status_code, buffer);
         }
     }
 
@@ -167,8 +167,8 @@ app.patch('/update_cache', async (req, res) => {
 /**
  * @swagger
  *
- * /clear_cache:
- *   patch:
+ * /cache/clear:
+ *   put:
  *     summary: Очистить кэш
  *     tags:
  *       - Cache server
@@ -188,16 +188,109 @@ app.patch('/update_cache', async (req, res) => {
  *                   type: array
  *                   description: Коды состояние, хранящиеся в кэше до очистки
  *                   example: [200, 301, 404]
+ *                 capacity:
+ *                   type: integer
+ *                   description: Максимальный размер кэша
+ *                   example: 5   
  */
-app.patch('/clear_cache', (req, res) => {
-    let keys = cache.get_keys();
+app.put('/cache/clear', (req, res) => {
+    let json = cache.serialize();
     cache.clear();
 
     // Отправляю json для отладки
-    res.json({count: keys.length, keys});
+    res.json(json);
 });
 
+/**
+ * @swagger
+ *
+ * /cache/change_capacity:
+ *   put:
+ *     summary: Поменять размер кэша
+ *     tags:
+ *       - Cache server
+ *     parameters:
+ *       - name: capacity
+ *         description: новый размер кэша
+ *         in: query
+ *         required: true
+ *         schema:
+ *           type: integer
+ *     responses:
+ *       200:
+ *         description: Размер кэша изменён
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 count:
+ *                   type: integer
+ *                   description: Количество элементов в кэше после изменения размера
+ *                   example: 3
+ *                 keys:
+ *                   type: array
+ *                   description: Коды состояние, хранящиеся в кэше после изменения размера
+ *                   example: [200, 301, 404]   
+ *                 capacity:
+ *                   type: integer
+ *                   description: Максимальный размер кэша
+ *                   example: 5
+ *       400:
+ *         description: Неверно указан новый размер кэша
+ *         content:
+ *           text/plain:
+ *             schema:
+ */
+app.put('/cache/change_capacity', (req, res) => {
+    let new_capacity = Number(req.query.capacity);
+    if (Number.isNaN(new_capacity) || !Number.isFinite(new_capacity)) {
+        res.status(400).send(`Capacity should be integer, got ${new_capacity}`);
+        return;
+    }
 
+    if (new_capacity < -1) {
+        res.status(400).send(`Capacity should be greater than or equal -1, got ${new_capacity}`);
+        return;
+    }
+
+    cache.change_cache_capacity(new_capacity);
+    res.json(cache.serialize());
+});
+
+/**
+ * @swagger
+ *
+ * /cache/get:
+ *   get:
+ *     summary: Получить коды состояния, хранящиеся в кэше
+ *     tags:
+ *       - Cache server
+ *     responses:
+ *       200:
+ *         description: Ок
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 count:
+ *                   type: integer
+ *                   description: Количество элементов в кэше
+ *                   example: 3
+ *                 keys:
+ *                   type: array
+ *                   description: Коды состояние, хранящиеся в кэше
+ *                   example: [200, 301, 404]
+ *                 capacity:
+ *                   type: integer
+ *                   description: Максимальный размер кэша
+ *                   example: 5
+ */
+app.get('/cache/get', (req, res) =>
+{
+    res.json(cache.serialize());
+});
 
 app.listen(PORT, () => {
     console.log(`Сервер запущен на порту ${PORT}`);
