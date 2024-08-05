@@ -96,12 +96,7 @@ async function fetch_data_and_transform_to_buffer(status_code) {
  *         allowEmptyValue: true
  *     responses:
  *       200:
- *         description: Картинка кота, взятая с https://http.cat/
- *         content:
- *           image/jpg:
- *             schema:
- *       203:
- *         description: Картинка кота, взятая из кэша
+ *         description: Картинка кота, соответствующая коду состояния ответа HTTP
  *         content:
  *           image/jpg:
  *             schema:
@@ -118,7 +113,6 @@ app.get('/:status_code', async (req, res) => {
     if (use_cache && cache.has_key(status_code)) {
         // если есть, вовзращаю картинку из кэша
         res.type('image/jpg')
-            .status(203)
             .send(cache.get_value(status_code));
     } else {
         // иначе делаю запрос к API
